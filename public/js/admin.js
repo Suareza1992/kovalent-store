@@ -38,6 +38,7 @@ export function init(context) {
     if (ctx.state.me) { renderBar(); refreshOrderCount(); }
     if (ctx.state.overlay === 'admin') {
       if (view.name === 'editor') collectEditor($('[data-form="product"]'));
+      if (view.name === 'section') collectSection($('[data-form="section"]'));
       render();
     }
   });
@@ -63,7 +64,7 @@ function show(name, patch = {}) {
 function render() {
   const card = $('#admin-card');
   card.className = `modal-card admin-card ${view.name === 'login' ? 'narrow' : ''}`;
-  card.innerHTML = { login: loginView, editor: editorView, orders: ordersView, order: orderView, settings: settingsView, users: usersView, account: accountView }[view.name]();
+  card.innerHTML = { login: loginView, editor: editorView, section: sectionView, orders: ordersView, order: orderView, settings: settingsView, users: usersView, account: accountView }[view.name]();
   const af = card.querySelector('[data-autofocus]');
   if (af) requestAnimationFrame(() => af.focus({ preventScroll: true }));
 }
@@ -357,6 +358,100 @@ async function deleteProduct(id) {
 }
 
 /* ==========================================================================
+   Dynamic section editor
+   One form for every section: the fields come from the schema in sections.js.
+   ========================================================================== */
+function openSectionEditor(section, id) {
+  const item = id ? ctx.content()[section].find((x) => x.id === Number(id)) : null;
+  const empty = { shared: {}, es: {}, en: {}, pt: {} };
+  const data = item ? structuredClone({ ...empty, ...item.data }) : empty;
+  show('section', { sec: { section, id: item?.id || null, data, lang: 'es', errors: {}, saving: false } });
+}
+
+function sectionView() {
+  const { section, id, data, lang, errors } = view.sec;
+  const schema = ctx.SECTIONS[section];
+  const sectionName = t(`sec.${section}`);
+  const isTr = lang !== 'es';
+  const field = (f) => {
+    if (!f.tr && isTr) return ''; // shared fields (numbers, icons) only on the main tab
+    const val = f.tr ? data[lang][f.key] || '' : data.shared[f.key] || '';
+    const ph = isTr && f.tr ? esc(data.es[f.key] || '') : '';
+    const err = errors[f.key] ? `<span class="err">${te(errors[f.key])}</span>` : '<span class="err"></span>';
+    const label = `<label>${te(`fld.${f.key}`)}${f.hint ? ` <small>${te(f.hint)}</small>` : ''}</label>`;
+    if (f.type === 'icon') {
+      return `<div class="field ${errors[f.key] ? 'invalid' : ''}">${label}<div class="icon-pick">
+        ${Object.entries(ctx.ICONS).map(([name, svg]) => `<label title="${name}"><input type="radio" name="${f.key}" value="${name}" ${val === name ? 'checked' : ''}/><svg viewBox="0 0 24 24" aria-hidden="true">${svg}</svg><span class="sr-only">${name}</span></label>`).join('')}
+      </div>${err}</div>`;
+    }
+    const input = f.type === 'textarea'
+      ? `<textarea name="${f.key}" rows="4" maxlength="${f.max}" placeholder="${ph}">${esc(val)}</textarea>`
+      : `<input name="${f.key}" value="${esc(val)}" maxlength="${f.max}" placeholder="${ph}"/>`;
+    return `<div class="field ${errors[f.key] ? 'invalid' : ''}">${label}${input}${err}</div>`;
+  };
+  return `${head(te(id ? 'a.sec.edit' : 'a.sec.new', { section: sectionName }), te('a.sec.sub'))}
+  <form class="adm-form" data-form="section" novalidate>
+    <div class="ed-langs" role="tablist" aria-label="${te('a.ed.lang')}">
+      ${Object.entries(LANGS).map(([k, l]) => `<button type="button" role="tab" data-ad="sec-lang" data-lang-tab="${k}" aria-selected="${lang === k}">${esc(l.label)}${k === 'es' ? ` <small>${te('a.ed.langMain')}</small>` : ''}</button>`).join('')}
+    </div>
+    ${isTr ? `<p class="ed-tr-note">${te('a.ed.langHint')}</p>` : ''}
+    ${schema.fields.map(field).join('')}
+    <div class="ed-actions">
+      ${id ? `<button type="button" class="btn btn-ghost danger-ghost" data-ad="sec-delete">${te('a.sec.delete')}</button>` : '<span></span>'}
+      <div>
+        <button type="button" class="btn btn-ghost" data-ad="close">${te('a.cancel')}</button>
+        <button class="btn btn-primary" ${view.sec.saving ? 'disabled' : ''}>${te(view.sec.saving ? 'a.ed.saving' : id ? 'a.ed.save' : 'a.sec.create')}</button>
+      </div>
+    </div>
+  </form>`;
+}
+
+// Form → editor state, into the bucket for the language tab being shown.
+function collectSection(form) {
+  if (!form || !view.sec) return;
+  const { section, data, lang } = view.sec;
+  const fd = new FormData(form);
+  for (const f of ctx.SECTIONS[section].fields) {
+    if (!fd.has(f.key)) continue; // not on this tab (or no icon picked yet)
+    const value = String(fd.get(f.key)).trim();
+    if (f.tr) data[lang][f.key] = value;
+    else data.shared[f.key] = value;
+  }
+}
+
+async function saveSection(form) {
+  collectSection(form);
+  const { section, id, data } = view.sec;
+  view.sec.saving = true; render();
+  try {
+    const res = id
+      ? await ctx.api(`/admin/content/${id}`, { method: 'PUT', body: { data } })
+      : await ctx.api('/admin/content', { method: 'POST', body: { section, data } });
+    ctx.setContent(res.content);
+    ctx.closeOverlays();
+    ctx.toast({ icon: 'check', ok: te('a.t.saved'), title: te('a.t.secSaved'), text: te(`sec.${section}`) });
+  } catch (err) {
+    view.sec.saving = false;
+    if (err.fields) { view.sec.errors = err.fields; view.sec.lang = 'es'; render(); }
+    else { render(); fail(err); }
+  }
+}
+
+async function moveSection(id, dir) {
+  try { ctx.setContent((await ctx.api(`/admin/content/${id}/move`, { method: 'POST', body: { dir } })).content); } catch (err) { fail(err); }
+}
+
+async function deleteSectionItem(section, id) {
+  if (!window.confirm(t('a.c.secDelete', { section: t(`sec.${section}`) }))) return;
+  try {
+    const res = await ctx.api(`/admin/content/${id}`, { method: 'DELETE' });
+    if (ctx.state.overlay === 'admin') ctx.closeOverlays();
+    ctx.setContent(res.content);
+    ctx.toast({ icon: 'close', title: te('a.t.secDeleted') });
+  } catch (err) { fail(err); }
+}
+
+/* ==========================================================================
    Orders
    ========================================================================== */
 async function openOrders(filter = view.filter) {
@@ -619,6 +714,11 @@ async function onClick(e) {
     if (adm.dataset.admin === 'new') openEditor(null);
     if (adm.dataset.admin === 'edit') openEditor(adm.dataset.id);
     if (adm.dataset.admin === 'delete') deleteProduct(adm.dataset.id);
+    if (adm.dataset.admin === 'sec-new') openSectionEditor(adm.dataset.sec, null);
+    if (adm.dataset.admin === 'sec-edit') openSectionEditor(adm.dataset.sec, adm.dataset.id);
+    if (adm.dataset.admin === 'sec-up') moveSection(adm.dataset.id, -1);
+    if (adm.dataset.admin === 'sec-down') moveSection(adm.dataset.id, 1);
+    if (adm.dataset.admin === 'sec-delete') deleteSectionItem(adm.dataset.sec, adm.dataset.id);
     return;
   }
 
@@ -629,6 +729,14 @@ async function onClick(e) {
   const imgs = view.ed?.d.images;
   switch (a) {
     case 'close': ctx.closeOverlays(); break;
+    case 'sec-lang': {
+      collectSection($('[data-form="section"]'));
+      view.sec.lang = el.dataset.langTab;
+      render();
+      $(`[data-lang-tab="${view.sec.lang}"]`)?.focus();
+      break;
+    }
+    case 'sec-delete': deleteSectionItem(view.sec.section, view.sec.id); break;
     case 'delete': deleteProduct(el.dataset.id); break;
     case 'ed-lang': {
       collectEditor($('[data-form="product"]'));
@@ -695,6 +803,7 @@ async function onSubmit(e) {
       break;
     }
     case 'product': saveProduct(form); break;
+    case 'section': saveSection(form); break;
     case 'settings': saveSettings(form); break;
     case 'notes':
       try {

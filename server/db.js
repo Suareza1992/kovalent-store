@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRODUCTS as SEED_PRODUCTS } from '../public/js/data.js';
+import { SECTIONS, SECTION_KEYS } from '../public/js/sections.js';
+import { translate } from '../public/js/i18n.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
@@ -59,6 +61,16 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS orders_status ON orders(status, created_at);
 
+  -- Dynamic home-page sections (trust badges, FAQ, stats…). See public/js/sections.js for the schema.
+  CREATE TABLE IF NOT EXISTS content (
+    id         INTEGER PRIMARY KEY,
+    section    TEXT NOT NULL,
+    sort       INTEGER NOT NULL DEFAULT 0,
+    data       TEXT NOT NULL,              -- JSON: { shared: {...}, es: {...}, en: {...}, pt: {...} }
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS content_section ON content(section, sort);
+
   CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -89,6 +101,23 @@ if (!schema || Number(schema.value) < 2) {
     update.run(JSON.stringify(next), row.id);
   }
   db.prepare("INSERT INTO settings (key, value) VALUES ('schema', '2') ON CONFLICT(key) DO UPDATE SET value = '2'").run();
+}
+
+// Migration 3 (Oct 2026): home-page sections moved from hard-coded HTML into the `content` table,
+// seeded with the text the site already showed (in all three languages). Stats start empty so the
+// "Real stats go here" placeholders stay until real numbers are entered.
+if (Number(db.prepare("SELECT value FROM settings WHERE key = 'schema'").get()?.value) < 3) {
+  const L = ['es', 'en', 'pt'];
+  const per = (fn) => Object.fromEntries(L.map((l) => [l, fn((k) => translate(l, k), l)]));
+  const seed = {
+    trust: ['flask', 'lock', 'shield', 'truck'].map((icon, i) => ({ shared: { icon }, ...per((t) => ({ title: t(`trust.${i + 1}`), text: t(`trust.${i + 1}s`) })) })),
+    aboutPoints: [1, 2, 3].map((n) => per((t) => ({ title: t(`about.pt${n}`), text: t(`about.pt${n}s`) }))),
+    policies: [1, 2, 3].map((n) => per((t) => ({ title: t(`policy.${n}`), text: t(`policy.${n}s`) }))),
+    faq: translate('es', 'faq.items').map((_, i) => per((t) => { const [tag, question, answer] = t('faq.items')[i]; return { tag, question, answer }; })),
+  };
+  const insert = db.prepare('INSERT INTO content (section, sort, data) VALUES (?, ?, ?)');
+  for (const [section, items] of Object.entries(seed)) items.forEach((data, i) => insert.run(section, i, JSON.stringify(data)));
+  db.prepare("UPDATE settings SET value = '3' WHERE key = 'schema'").run();
 }
 
 export function listProducts() {
@@ -149,4 +178,14 @@ export function parseOrder(row) {
 
 export function getOrder(id) {
   return parseOrder(db.prepare('SELECT * FROM orders WHERE id = ?').get(id));
+}
+
+/* ---------- dynamic sections ---------- */
+
+export function listContent() {
+  const out = Object.fromEntries(SECTION_KEYS.map((k) => [k, []]));
+  for (const row of db.prepare('SELECT id, section, data FROM content ORDER BY section, sort, id').all()) {
+    if (SECTIONS[row.section]) out[row.section].push({ id: row.id, section: row.section, data: JSON.parse(row.data) });
+  }
+  return out;
 }

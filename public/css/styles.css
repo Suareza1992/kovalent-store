@@ -306,7 +306,7 @@ input, select { font: inherit; color: inherit; }
    Policy + FAQ
    ========================================================================== */
 .faq { max-width: 1440px; margin: 0 auto; padding: 88px 40px 104px; }
-.policy-banner { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: linear-gradient(90deg, rgba(0, 229, 255, .4), rgba(47, 123, 255, .4)); padding: 1px; border-radius: 16px; overflow: hidden; margin-bottom: 88px; }
+.policy-banner { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1px; background: linear-gradient(90deg, rgba(0, 229, 255, .4), rgba(47, 123, 255, .4)); padding: 1px; border-radius: 16px; overflow: hidden; margin-bottom: 88px; }
 .policy-banner > div { background: var(--slate); padding: 26px 28px; }
 .policy-banner > div:first-child { border-radius: 15px 0 0 15px; }
 .policy-banner > div:last-child { border-radius: 0 15px 15px 0; }
@@ -737,6 +737,11 @@ body.is-admin .toasts { bottom: 84px; }
 .lang-menu button[aria-selected="true"] { color: var(--blue); font-weight: 600; }
 .lang-menu button[aria-selected="true"]::after { content: '✓'; }
 
+/* Dynamic sections: containers filled by app.js (see js/sections.js) */
+.hero-callouts { display: contents; } /* callouts stay positioned against .hero-visual */
+.dyn { position: relative; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
 /* ==========================================================================
    Placeholders for real stats / reviews (replace with real content)
    ========================================================================== */
@@ -826,7 +831,7 @@ body.is-admin .toasts { bottom: 84px; }
 
 @media (max-width: 900px) {
   .grid { grid-template-columns: repeat(2, 1fr); gap: 16px; }
-  .policy-banner { grid-template-columns: 1fr; }
+  .policy-banner { grid-auto-flow: row; }
   .policy-banner > div:first-child { border-radius: 15px 15px 0 0; }
   .policy-banner > div:last-child { border-radius: 0 0 15px 15px; }
   .section-head { flex-wrap: wrap; gap: 16px; }

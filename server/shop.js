@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import express from 'express';
-import { db, listProducts, getProduct, getSettings, getOrder } from './db.js';
+import { db, listProducts, getProduct, getSettings, getOrder, listContent } from './db.js';
 import { limiter, publicUser } from './auth.js';
 import { providers, create, verify, stripeEvent, mpPayment, mpPaymentMatches, mpLocalAmount } from './payments.js';
 import * as email from './email.js';
@@ -30,6 +30,7 @@ shop.get('/bootstrap', (req, res) => {
   const settings = getSettings();
   res.set('Cache-Control', 'no-store').json({
     products: listProducts(),
+    content: listContent(), // dynamic home-page sections, rendered by app.js
     settings: publicSettings(settings),
     payments: paymentMethods(settings),
     me: publicUser(req.user),

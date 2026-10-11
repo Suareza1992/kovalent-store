@@ -81,39 +81,18 @@
             </button>
             <button class="btn btn-ghost btn-lg" data-quick="starter-kit" data-i18n="hero.kit">Ver kit de inicio</button>
           </div>
-          <dl class="hero-stats">
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-          </dl>
+          <!-- Dynamic: filled from the database (section "heroStats"). See js/sections.js -->
+          <dl class="hero-stats" data-section="heroStats"></dl>
         </div>
         <div class="hero-visual" id="hero-visual">
-          <div class="hero-callout c1"><b data-i18n="hero.callout1">SiO₂ / TiO₂</b><span data-i18n="stats.placeholder">Aquí van las estadísticas reales</span></div>
-          <div class="hero-callout c2"><b data-i18n="hero.callout2">Autolimpiante</b><span data-i18n="stats.placeholder">Aquí van las estadísticas reales</span></div>
+          <div class="hero-callouts" data-section="heroCallouts"></div>
         </div>
       </div>
     </section>
 
     <!-- ============ TRUST STRIP ============ -->
     <section class="trust" data-i18n-attr="aria-label:trust.aria" aria-label="Por qué Kovalent">
-      <div class="trust-inner">
-        <div class="trust-item">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21.5h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M7 15h10"/></svg>
-          <div><b data-i18n="trust.1">Fórmulas profesionales</b><span data-i18n="trust.1s">La misma química que usan nuestros instaladores</span></div>
-        </div>
-        <div class="trust-item">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-          <div><b data-i18n="trust.2">Pago seguro SSL</b><span data-i18n="trust.2s">Pagos cifrados y alojados</span></div>
-        </div>
-        <div class="trust-item">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
-          <div><b data-i18n="trust.3">Garantía de 30 días</b><span data-i18n="trust.3s">Te encanta o te devolvemos tu dinero</span></div>
-        </div>
-        <div class="trust-item">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/></svg>
-          <div><b data-i18n="trust.4">Envío rápido</b><span data-i18n="trust.4s">A toda América · sale en 24 h</span></div>
-        </div>
-      </div>
+      <div class="trust-inner" data-section="trust"></div>
     </section>
 
     <!-- ============ CATALOG ============ -->
@@ -157,11 +136,7 @@
           <h2 data-i18n="about.title">Unidos a nivel molecular.</h2>
           <p data-i18n="about.p1"></p>
           <p data-i18n="about.p2"></p>
-          <ul class="about-points">
-            <li><b data-i18n="about.pt1"></b> <span data-i18n="about.pt1s"></span></li>
-            <li><b data-i18n="about.pt2"></b> <span data-i18n="about.pt2s"></span></li>
-            <li><b data-i18n="about.pt3"></b> <span data-i18n="about.pt3s"></span></li>
-          </ul>
+          <ul class="about-points" data-section="aboutPoints"></ul>
         </div>
         <div class="about-panel">
           <div class="molecule" aria-hidden="true">
@@ -182,39 +157,21 @@
               <g fill="#00E5FF"><circle cx="90" cy="25" r="6"/><circle cx="210" cy="25" r="6"/><circle cx="285" cy="160" r="6"/><circle cx="240" cy="265" r="6"/><circle cx="15" cy="160" r="6"/><circle cx="60" cy="265" r="6"/></g>
             </svg>
           </div>
-          <dl class="about-stats">
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-            <div><dt class="ph" data-i18n="stats.placeholder">Aquí van las estadísticas reales</dt></div>
-          </dl>
+          <dl class="about-stats" data-section="aboutStats"></dl>
         </div>
       </div>
     </section>
 
     <!-- ============ POLICY + FAQ ============ -->
     <section class="faq" id="faq">
-      <div class="policy-banner">
-        <div>
-          <b data-i18n="policy.1"></b>
-          <span data-i18n="policy.1s"></span>
-        </div>
-        <div>
-          <b data-i18n="policy.2"></b>
-          <span data-i18n="policy.2s"></span>
-        </div>
-        <div>
-          <b data-i18n="policy.3"></b>
-          <span data-i18n="policy.3s"></span>
-        </div>
-      </div>
+      <div class="policy-banner" data-section="policies"></div>
       <div class="faq-wrap">
         <div class="faq-intro">
           <p class="kicker" data-i18n="faq.kicker"></p>
           <h2 data-i18n="faq.title"></h2>
           <p data-i18n="faq.text"></p>
         </div>
-        <div class="accordion" id="faq-list"></div>
+        <div class="accordion" id="faq-list" data-section="faq"></div>
       </div>
     </section>
   </main>

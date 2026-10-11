@@ -82,6 +82,13 @@ public/
   js/art.js     generated product art (used until a product has photos)
 ```
 
+## Dynamic home-page sections
+
+Hero stats, hero callouts, trust badges, About highlights, About stats, the policy banner and the FAQ
+are stored in the database (`content` table) and rendered by JavaScript, so staff edit them on the page
+(✎ ↑ ↓ ✕ and "+ Add" appear when signed in). The schema in `public/js/sections.js` drives validation,
+the edit form and the item limits. **Full walkthrough with exercises: [docs/LEARN-dynamic-sections.md](docs/LEARN-dynamic-sections.md).**
+
 ## Translations
 
 - **Interface text:** every label, message, FAQ entry and email lives in `public/js/i18n.js` (`es`, `en`, `pt`). Add or change a string in all three blocks; a missing key falls back to Spanish.
@@ -93,7 +100,7 @@ public/
 
 ## Placeholders to replace before launch
 
-- **"Real stats go here"**: the hero stats, the hero callouts, the About stats panel, and the rating line on every product.
+- **"Real stats go here"**: the hero stats, hero callouts and About stats. These disappear as soon as staff add real items to those sections from the page. The rating line on each product is still a placeholder in code.
 - **"Sample review goes here"**: the review cards in each product's detail view.
 
 Real reviews need a review system (or an import from wherever the client collects them); none is built yet.
@@ -135,4 +142,5 @@ All breakpoints are in the "Responsive layer" block at the end of `public/css/st
   - Card, PayPal and Mercado Pago orders become **Paid** on their own.
   - Zelle / ATH Móvil orders show as **Awaiting transfer**. Check your bank app, then open the order and tap **Payment received**; the customer gets a confirmation email.
   - Once it's shipped, add the tracking number and tap **Mark as shipped**.
+- **Home page text:** the trust badges, FAQ, policies, About points and stats each show ✎ (edit), ↑ ↓ (reorder) and ✕ (delete), plus an "+ Add" button. Fill in Spanish first; the English and Portuguese tabs are optional.
 - **Settings:** shipping prices, free-shipping threshold, sales tax states, promo codes, and your Zelle / ATH Móvil instructions.

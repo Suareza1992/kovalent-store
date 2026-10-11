@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import { db, UPLOAD_DIR, listProducts, getProduct, getSettings, saveSettings, getOrder, parseOrder } from './db.js';
+import { db, UPLOAD_DIR, listProducts, getProduct, getSettings, saveSettings, getOrder, parseOrder, listContent } from './db.js';
+import { SECTIONS, ICONS, CONTENT_LANGS } from '../public/js/sections.js';
 import { requireUser, requireSuper, hashPassword, verifyPassword, randomPassword, startSession, endSession, publicUser, limiter } from './auth.js';
 import { providers } from './payments.js';
 import { markPaid } from './shop.js';
@@ -130,6 +131,74 @@ admin.delete('/admin/products/:id', (req, res) => {
   const changed = db.prepare('UPDATE products SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0').run(req.params.id).changes;
   if (!changed) return fail(res, 404, 'err.productNotFound');
   res.json({ products: listProducts() });
+});
+
+/* ==========================================================================
+   Dynamic sections (trust badges, FAQ, stats…)
+   Every rule comes from the schema in public/js/sections.js, so adding a section
+   there needs no new server code.
+   ========================================================================== */
+function cleanItem(section, input = {}) {
+  const schema = SECTIONS[section];
+  const errors = {};
+  const data = { shared: {}, ...Object.fromEntries(CONTENT_LANGS.map((l) => [l, {}])) };
+  for (const f of schema.fields) {
+    if (f.tr) {
+      for (const l of CONTENT_LANGS) data[l][f.key] = text(input[l]?.[f.key], f.max || 200);
+      if (f.required && !data.es[f.key]) errors[f.key] = 'err.required'; // Spanish is the base language
+    } else if (f.type === 'icon') {
+      data.shared[f.key] = ICONS[input.shared?.[f.key]] ? input.shared[f.key] : '';
+      if (f.required && !data.shared[f.key]) errors[f.key] = 'err.icon';
+    } else {
+      data.shared[f.key] = text(input.shared?.[f.key], f.max || 200);
+      if (f.required && !data.shared[f.key]) errors[f.key] = 'err.required';
+    }
+  }
+  return { errors, data };
+}
+
+const contentRow = (id) => db.prepare('SELECT id, section, sort FROM content WHERE id = ?').get(id);
+
+admin.post('/admin/content', (req, res) => {
+  const section = String(req.body?.section || '');
+  if (!SECTIONS[section]) return fail(res, 400, 'err.unknownSection');
+  const count = db.prepare('SELECT COUNT(*) AS n FROM content WHERE section = ?').get(section).n;
+  if (count >= SECTIONS[section].max) return fail(res, 400, 'err.sectionFull');
+  const { errors, data } = cleanItem(section, req.body.data);
+  if (Object.keys(errors).length) return fail(res, 400, 'err.fields', { fields: errors });
+  const next = db.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS s FROM content WHERE section = ?').get(section).s;
+  db.prepare('INSERT INTO content (section, sort, data) VALUES (?, ?, ?)').run(section, next, JSON.stringify(data));
+  res.status(201).json({ content: listContent() });
+});
+
+admin.put('/admin/content/:id', (req, res) => {
+  const row = contentRow(req.params.id);
+  if (!row) return fail(res, 404, 'err.itemNotFound');
+  const { errors, data } = cleanItem(row.section, req.body?.data);
+  if (Object.keys(errors).length) return fail(res, 400, 'err.fields', { fields: errors });
+  db.prepare('UPDATE content SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(data), row.id);
+  res.json({ content: listContent() });
+});
+
+// Swap places with the neighbour above (dir = -1) or below (dir = 1).
+admin.post('/admin/content/:id/move', (req, res) => {
+  const row = contentRow(req.params.id);
+  if (!row) return fail(res, 404, 'err.itemNotFound');
+  const ordered = db.prepare('SELECT id FROM content WHERE section = ? ORDER BY sort, id').all(row.section).map((r) => r.id);
+  const i = ordered.indexOf(row.id);
+  const j = i + (Number(req.body?.dir) < 0 ? -1 : 1);
+  if (j >= 0 && j < ordered.length) {
+    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+    const setSort = db.prepare('UPDATE content SET sort = ? WHERE id = ?');
+    ordered.forEach((id, n) => setSort.run(n, id)); // renumber so sorts stay clean
+  }
+  res.json({ content: listContent() });
+});
+
+admin.delete('/admin/content/:id', (req, res) => {
+  const changed = db.prepare('DELETE FROM content WHERE id = ?').run(req.params.id).changes;
+  if (!changed) return fail(res, 404, 'err.itemNotFound');
+  res.json({ content: listContent() });
 });
 
 /* ---------- photo uploads (raw body; the browser resizes before sending) ---------- */

@@ -2,6 +2,7 @@ import { CATEGORIES, COLLECTIONS, PRODUCTS as LAUNCH_PRODUCTS } from './data.js'
 import { productArt, heroArt, LOGO_MARK } from './art.js';
 import { computeTotals, COUNTRIES, US_STATES, SHIPPING_METHODS, shippingOptions, isDomestic } from './pricing.js';
 import { LANGS, DEFAULT_LANG, isLang, translate, hasKey, localizeProduct, formatMoney, countryName } from './i18n.js';
+import { SECTIONS, SECTION_KEYS, ICONS, localizeItem } from './sections.js';
 
 /* ==========================================================================
    Language
@@ -90,7 +91,7 @@ function media(p, variant = 0, { lazy = true } = {}) {
 const CART_KEY = 'kovalent.cart.v1';
 const CHECKOUT_KEY = 'kovalent.checkout.v1';
 
-const config = { settings: { shipping: { standard: 0, express: 0, overnight: 0, international: 0, freeOver: 0 }, tax: { enabled: false, states: [] }, hasPromos: false }, payments: [] };
+const config = { content: {}, settings: { shipping: { standard: 0, express: 0, overnight: 0, international: 0, freeOver: 0 }, tax: { enabled: false, states: [] }, hasPromos: false }, payments: [] };
 
 const state = {
   category: 'All',
@@ -201,7 +202,7 @@ function setLang(next) {
   try { localStorage.setItem(LANG_KEY, lang); } catch { /* storage unavailable */ }
   setProducts(source);
   applyStatic();
-  renderFAQ();
+  renderSections();
   renderGrid();
   renderBadge();
   closeSuggestions();
@@ -1034,18 +1035,68 @@ function toastAdded(p, qty) {
 }
 
 /* ==========================================================================
-   FAQ
+   Dynamic sections (trust badges, FAQ, stats…)
+   The data comes from the database (config.content, loaded in /api/bootstrap).
+   For each section: localize every item → escape it → run it through its template
+   → put the HTML into the element marked data-section="…" in index.html.
    ========================================================================== */
-function renderFAQ() {
-  const open = new Set($$('#faq-list .acc-item.open').map((el) => el.dataset.i));
-  const items = t('faq.items');
-  $('#faq-list').innerHTML = items.map(([tag, q, a], i) => {
-    const isOpen = open.size ? open.has(String(i)) : i === 0;
-    return `<div class="acc-item ${isOpen ? 'open' : ''}" data-i="${i}">
-      <button class="acc-q" aria-expanded="${isOpen}" aria-controls="faq-a-${i}" id="faq-q-${i}"><span><span class="acc-tag">${esc(tag)}</span>${esc(q)}</span><span class="plus" aria-hidden="true"></span></button>
-      <div class="acc-a" id="faq-a-${i}" role="region" aria-labelledby="faq-q-${i}"><div><p>${esc(a)}</p></div></div>
+const svgIcon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+
+// One template per section. `it` is already localized and HTML-escaped; `tools` is the
+// admin's edit/move/delete strip (empty for shoppers); `i` is the position.
+const TEMPLATES = {
+  heroStats: (it, tools) => `<div class="dyn">${tools}<dt>${it.value}</dt><dd>${it.label}</dd></div>`,
+  heroCallouts: (it, tools, i) => `<div class="hero-callout c${i + 1} dyn">${tools}<b>${it.title}</b><span>${it.text}</span></div>`,
+  trust: (it, tools) => `<div class="trust-item dyn">${tools}${svgIcon(it.icon)}<div><b>${it.title}</b><span>${it.text}</span></div></div>`,
+  aboutPoints: (it, tools) => `<li class="dyn">${tools}<b>${it.title}</b> <span>${it.text}</span></li>`,
+  aboutStats: (it, tools) => `<div class="dyn">${tools}<dt>${it.value}</dt><dd>${it.label}</dd></div>`,
+  policies: (it, tools) => `<div class="dyn">${tools}<b>${it.title}</b><span>${it.text}</span></div>`,
+  faq: (it, tools, i) => {
+    const open = faqOpen.has(it.id) || (!faqTouched && i === 0);
+    return `<div class="acc-item dyn ${open ? 'open' : ''}" data-faq="${it.id}">${tools}
+      <button class="acc-q" aria-expanded="${open}" aria-controls="faq-a-${it.id}" id="faq-q-${it.id}"><span>${it.tag ? `<span class="acc-tag">${it.tag}</span>` : ''}${it.question}</span><span class="plus" aria-hidden="true"></span></button>
+      <div class="acc-a" id="faq-a-${it.id}" role="region" aria-labelledby="faq-q-${it.id}"><div><p>${it.answer}</p></div></div>
     </div>`;
-  }).join('');
+  },
+};
+
+// Shown while a stats-type section is still empty, so the layout keeps its shape.
+const PLACEHOLDERS = {
+  heroStats: () => `<div><dt class="ph">${esc(t('stats.placeholder'))}</dt></div>`,
+  heroCallouts: (i) => `<div class="hero-callout c${i + 1}"><span>${esc(t('stats.placeholder'))}</span></div>`,
+  aboutStats: () => `<div><dt class="ph">${esc(t('stats.placeholder'))}</dt></div>`,
+};
+
+const faqOpen = new Set();
+let faqTouched = false;
+
+function adminTools(key, it, i, count) {
+  if (!state.me) return '';
+  const label = esc(t(`sec.${key}`));
+  return `<span class="sec-tools" role="group" aria-label="${label}">
+    <button data-admin="sec-edit" data-id="${it.id}" data-sec="${key}" aria-label="${esc(t('a.sec.edit1'))}" title="${esc(t('a.sec.edit1'))}">✎</button>
+    <button data-admin="sec-up" data-id="${it.id}" ${i === 0 ? 'disabled' : ''} aria-label="${esc(t('a.sec.up'))}" title="${esc(t('a.sec.up'))}">↑</button>
+    <button data-admin="sec-down" data-id="${it.id}" ${i === count - 1 ? 'disabled' : ''} aria-label="${esc(t('a.sec.down'))}" title="${esc(t('a.sec.down'))}">↓</button>
+    <button data-admin="sec-delete" data-id="${it.id}" data-sec="${key}" aria-label="${esc(t('a.sec.delete'))}" title="${esc(t('a.sec.delete'))}">✕</button>
+  </span>`;
+}
+
+function renderSection(key) {
+  const el = $(`[data-section="${key}"]`);
+  if (!el) return;
+  const items = (config.content[key] || []).map((item) => escapeDeep(localizeItem(item, lang)));
+  let html = items.map((it, i) => TEMPLATES[key](it, adminTools(key, it, i, items.length), i)).join('');
+  if (!items.length && PLACEHOLDERS[key]) html = Array.from({ length: SECTIONS[key].max }, (_, i) => PLACEHOLDERS[key](i)).join('');
+  if (state.me && items.length < SECTIONS[key].max) {
+    const tag = el.tagName === 'UL' ? 'li' : 'div';
+    html += `<${tag} class="sec-add-wrap"><button class="sec-add" data-admin="sec-new" data-sec="${key}">+ ${esc(t('a.sec.addTo', { section: t(`sec.${key}`) }))}</button></${tag}>`;
+  }
+  el.innerHTML = html;
+  el.hidden = !html; // e.g. no policies yet → hide the banner for shoppers
+}
+
+function renderSections() {
+  SECTION_KEYS.forEach(renderSection);
 }
 
 /* ==========================================================================
@@ -1096,6 +1147,9 @@ function onClick(e) {
     const open = !item.classList.contains('open');
     item.classList.toggle('open', open);
     el.setAttribute('aria-expanded', open);
+    faqTouched = true;
+    const id = Number(item.dataset.faq);
+    open ? faqOpen.add(id) : faqOpen.delete(id);
     return;
   }
   if ((el = q('[data-goto]'))) { goStep(+el.dataset.goto); return; }
@@ -1208,9 +1262,13 @@ const ctx = {
     renderGrid();
     if (state.overlay === 'product') { if (byId[modal.id]) rerenderProductKeepScroll(); else closeOverlays(); }
   },
+  SECTIONS, ICONS,
+  content: () => config.content, // raw items (all languages), for the section editor
+  setContent(content) { config.content = content; renderSections(); },
   setMe(me) {
     state.me = me;
     document.body.classList.toggle('is-admin', Boolean(me));
+    renderSections();
     renderGrid();
     if (state.overlay === 'product') rerenderProductKeepScroll();
   },
@@ -1235,7 +1293,6 @@ async function init() {
   $('#logo-mark-foot').innerHTML = LOGO_MARK.replace(/lg-k/g, 'lg-k2');
   const heroIds = ['k9-quantum', 'graphene-shield', 'hydro-seal'];
   $('#hero-visual').insertAdjacentHTML('afterbegin', heroArt(heroIds.map((id) => LAUNCH_PRODUCTS.find((p) => p.id === id))));
-  renderFAQ();
   initSearch();
   initZoom();
 
@@ -1253,6 +1310,7 @@ async function init() {
     const data = await api('/bootstrap');
     config.settings = data.settings;
     config.payments = data.payments;
+    config.content = data.content;
     setProducts(data.products);
     state.me = data.me;
     document.body.classList.toggle('is-admin', Boolean(data.me));
@@ -1260,6 +1318,7 @@ async function init() {
     state.loadError = true;
   }
   saveCart();
+  renderSections();
   renderGrid();
   renderBadge();
   if (state.me || location.pathname === '/admin') loadAdmin();
