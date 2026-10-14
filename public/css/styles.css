@@ -756,6 +756,27 @@ body.is-admin .toasts { bottom: 84px; }
 .ph-line { display: block; width: 120px; height: 10px; border-radius: 5px; background: var(--slate-3); }
 
 /* ==========================================================================
+   Legal / contact pages
+   ========================================================================== */
+.page-card { width: min(820px, 100%); }
+.legal-page { padding: 40px 48px 44px; color: #c3c9d4; font-size: 15.5px; line-height: 1.7; }
+.legal-page h2 { font-size: 32px; margin-bottom: 18px; }
+.legal-page h3 { font-size: 18px; margin: 26px 0 8px; color: var(--white); }
+.legal-page p { margin: 0 0 12px; }
+.legal-page ul, .legal-page ol { margin: 0 0 14px; padding-left: 22px; }
+.legal-page li { margin-bottom: 6px; }
+.legal-page strong { color: var(--white); }
+.legal-page .pm-admin { margin-bottom: 20px; padding-right: 48px; } /* room for the close button */
+mark.pending { background: rgba(255, 201, 77, .14); color: var(--gold); border: 1px dashed rgba(255, 201, 77, .5); border-radius: 5px; padding: 1px 6px; font-size: .92em; }
+.legal-links { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.legal-links a { color: var(--muted); text-decoration: none; font-size: 12.5px; }
+.legal-links a:hover { color: var(--blue); }
+.legal-links.in-page { margin-top: 32px; padding-top: 18px; border-top: 1px solid var(--line); }
+.footer-inner a[data-page] { display: block; padding: 5px 0; color: var(--muted); font-size: 14px; text-decoration: none; }
+.footer-inner a[data-page]:hover { color: var(--blue); }
+.terms a { color: var(--blue); }
+
+/* ==========================================================================
    Responsive layer
    Breakpoints: 1380 (nav → hamburger; Spanish/Portuguese labels are long) · 1024 (tablet) · 760 (header 2 rows) · 560 (phone)
    ========================================================================== */
@@ -881,6 +902,9 @@ body.is-admin .toasts { bottom: 84px; }
 
   .footer-inner { grid-template-columns: 1fr 1fr; padding: 40px 16px 32px; gap: 28px; }
   .footer-base { flex-direction: column; gap: 12px; text-align: center; padding: 20px 16px; }
+  .footer-base .legal-links { justify-content: center; }
+  .legal-page { padding: 28px 18px 32px; font-size: 15px; }
+  .legal-page h2 { font-size: 26px; }
 
   /* full-screen modals */
   .modal { padding: 0; place-items: stretch; }

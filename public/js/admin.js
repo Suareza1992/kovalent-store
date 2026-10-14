@@ -39,6 +39,7 @@ export function init(context) {
     if (ctx.state.overlay === 'admin') {
       if (view.name === 'editor') collectEditor($('[data-form="product"]'));
       if (view.name === 'section') collectSection($('[data-form="section"]'));
+      if (view.name === 'pageEdit') collectPage($('[data-form="page"]'));
       render();
     }
   });
@@ -64,7 +65,7 @@ function show(name, patch = {}) {
 function render() {
   const card = $('#admin-card');
   card.className = `modal-card admin-card ${view.name === 'login' ? 'narrow' : ''}`;
-  card.innerHTML = { login: loginView, editor: editorView, section: sectionView, orders: ordersView, order: orderView, settings: settingsView, users: usersView, account: accountView }[view.name]();
+  card.innerHTML = { login: loginView, editor: editorView, section: sectionView, orders: ordersView, order: orderView, settings: settingsView, users: usersView, account: accountView, pages: pagesView, pageEdit: pageEditView, audit: auditView, backups: backupsView }[view.name]();
   const af = card.querySelector('[data-autofocus]');
   if (af) requestAnimationFrame(() => af.focus({ preventScroll: true }));
 }
@@ -89,7 +90,10 @@ function renderBar() {
     <button data-ab="new">${te('a.bar.product')}</button>
     <button data-ab="orders">${te('a.bar.orders')} <em id="ab-pending" hidden></em></button>
     <button data-ab="settings">${te('a.bar.settings')}</button>
-    ${me.role === 'superadmin' ? `<button data-ab="users">${te('a.bar.team')}</button>` : ''}
+    <button data-ab="pages">${te('a.bar.pages')}</button>
+    ${me.role === 'superadmin' ? `<button data-ab="users">${te('a.bar.team')}</button>
+    <button data-ab="audit">${te('a.bar.activity')}</button>
+    <button data-ab="backups">${te('a.bar.backups')}</button>` : ''}
     <button data-ab="account">${te('a.bar.account')}</button>
     <button data-ab="logout">${te('a.bar.signout')}</button>`;
   document.body.append(bar);
@@ -452,6 +456,154 @@ async function deleteSectionItem(section, id) {
 }
 
 /* ==========================================================================
+   Legal / contact pages
+   ========================================================================== */
+async function loadPage(slug) {
+  if (!ctx.pageCache[slug]) ctx.pageCache[slug] = await ctx.api(`/pages/${slug}`);
+  return ctx.pageCache[slug];
+}
+
+async function openPages() {
+  try {
+    await Promise.all(ctx.PAGE_SLUGS.map(loadPage));
+    show('pages');
+  } catch (err) { fail(err); }
+}
+
+function pagesView() {
+  return `${head(te('a.p.title'), te('a.p.sub'))}
+    <div class="adm-table-wrap"><table class="adm-table">
+      <tbody>${ctx.PAGE_SLUGS.map((slug) => {
+        const { page } = ctx.pageCache[slug];
+        return `<tr><td><b>${esc(page[ctx.lang]?.title || page.es.title)}</b><small>/legal/${slug} · ${te('a.p.updated', { date: date(page.updated) })}</small></td>
+          <td class="r"><button class="btn btn-ghost btn-sm" data-ad="page-view" data-slug="${slug}">${te('a.p.view')}</button>
+          <button class="btn btn-primary btn-sm" data-ad="page-edit" data-slug="${slug}">${te('a.p.edit')}</button></td></tr>`;
+      }).join('')}</tbody></table></div>`;
+}
+
+async function openPageEditor(slug) {
+  try {
+    const { page } = await loadPage(slug);
+    const data = Object.fromEntries(['es', 'en', 'pt'].map((l) => [l, { title: page[l]?.title || '', body: page[l]?.body || '' }]));
+    show('pageEdit', { pg: { slug, data, lang: 'es', saving: false } });
+  } catch (err) { fail(err); }
+}
+
+function pagePreview() {
+  const { slug, data, lang } = view.pg;
+  const b = ctx.pageCache[slug]?.business || {};
+  const body = data[lang].body || data.es.body;
+  return ctx.renderPage(body, { business: b.name, email: b.email, phone: b.phone, address: b.address, updated: new Date().toLocaleDateString(locale(), { year: 'numeric', month: 'long', day: 'numeric' }) }, t('page.pending'));
+}
+
+function pageEditView() {
+  const { slug, data, lang, saving } = view.pg;
+  const isTr = lang !== 'es';
+  return `${head(te('a.p.editTitle', { page: t(`page.${slug}`) }), '', 'pages')}
+  <form class="adm-form" data-form="page" novalidate>
+    <div class="ed-langs" role="tablist" aria-label="${te('a.ed.lang')}">
+      ${Object.entries(LANGS).map(([k, l]) => `<button type="button" role="tab" data-ad="page-lang" data-lang-tab="${k}" aria-selected="${lang === k}">${esc(l.label)}${k === 'es' ? ` <small>${te('a.ed.langMain')}</small>` : ''}</button>`).join('')}
+    </div>
+    ${isTr ? `<p class="ed-tr-note">${te('a.ed.langHint')}</p>` : ''}
+    <div class="field"><label>${te('a.p.titleField')}</label><input name="title" maxlength="80" value="${esc(data[lang].title)}" placeholder="${isTr ? esc(data.es.title) : ''}"/></div>
+    <div class="page-edit-grid">
+      <div class="field"><label>${te('a.p.body')}</label><textarea name="body" rows="22" maxlength="20000" placeholder="${isTr ? esc(data.es.body.slice(0, 300)) : ''}">${esc(data[lang].body)}</textarea>
+        <p class="muted page-help">${te('a.p.help')}</p></div>
+      <div class="field"><label>${te('a.p.preview')}</label><div class="legal-page page-preview" id="page-preview">${pagePreview()}</div></div>
+    </div>
+    <div class="ed-actions"><span></span><div>
+      <button type="button" class="btn btn-ghost" data-ad="close">${te('a.cancel')}</button>
+      <button class="btn btn-primary" ${saving ? 'disabled' : ''}>${te(saving ? 'a.ed.saving' : 'a.ed.save')}</button>
+    </div></div>
+  </form>`;
+}
+
+function collectPage(form) {
+  if (!form || !view.pg) return;
+  const fd = new FormData(form);
+  view.pg.data[view.pg.lang] = { title: String(fd.get('title')).trim(), body: String(fd.get('body')) };
+}
+
+async function savePageForm(form) {
+  collectPage(form);
+  const { slug, data } = view.pg;
+  view.pg.saving = true; render();
+  try {
+    const res = await ctx.api(`/admin/pages/${slug}`, { method: 'PUT', body: { data } });
+    ctx.pageCache[slug] = { ...ctx.pageCache[slug], page: res.page };
+    ctx.closeOverlays();
+    ctx.toast({ icon: 'check', ok: te('a.t.saved'), title: te('a.t.pageSaved'), text: te(`page.${slug}`) });
+    ctx.openPage(slug, { fresh: true });
+  } catch (err) {
+    view.pg.saving = false; view.pg.lang = 'es'; render(); fail(err);
+  }
+}
+
+/* ==========================================================================
+   Activity log (superadmin)
+   ========================================================================== */
+async function openAudit(more = false) {
+  try {
+    const before = more && view.audit?.length ? view.audit[view.audit.length - 1].id : null;
+    const { entries } = await ctx.api(`/admin/audit${before ? `?before=${before}` : ''}`);
+    const all = more ? [...view.audit, ...entries] : entries;
+    const top = $('#admin-card')?.scrollTop || 0;
+    show('audit', { audit: all, auditMore: entries.length === 100 });
+    if (more) $('#admin-card').scrollTop = top;
+  } catch (err) { fail(err); }
+}
+
+function auditView() {
+  const rows = view.audit;
+  const details = (d) => (d ? `<ul class="audit-diff">${Object.entries(d).map(([k, [a, b]]) => `<li><span>${esc(k)}</span> ${esc(a)} → <b>${esc(b)}</b></li>`).join('')}</ul>` : '');
+  return `${head(te('a.audit.title'), te('a.audit.sub'))}
+    ${rows.length ? `<div class="adm-table-wrap"><table class="adm-table audit-table">
+      <thead><tr><th>${te('a.audit.when')}</th><th>${te('a.audit.who')}</th><th>${te('a.audit.what')}</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr class="${r.action === 'auth.login_failed' ? 'warn-row' : ''}">
+        <td>${date(r.at)}<small>${esc(r.ip || '')}</small></td>
+        <td>${esc(r.user_email || '—')}</td>
+        <td><b>${te(`audit.${r.action}`)}</b>${r.summary ? `<small>${esc(r.summary)}</small>` : ''}${details(r.details)}</td></tr>`).join('')}</tbody></table></div>
+      ${view.auditMore ? `<div class="adm-more"><button class="btn btn-ghost btn-sm" data-ad="audit-more">${te('a.audit.more')}</button></div>` : ''}`
+    : `<div class="adm-empty">${te('a.audit.empty')}</div>`}`;
+}
+
+/* ==========================================================================
+   Backups (superadmin)
+   ========================================================================== */
+async function openBackups() {
+  try { show('backups', { backup: await ctx.api('/admin/backup') }); } catch (err) { fail(err); }
+}
+
+function backupsView() {
+  const { status, offsite, local } = view.backup;
+  const kb = (n) => `${Math.max(1, Math.round(n / 1024)).toLocaleString(locale())} KB`;
+  const when = status ? new Date(status.at).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  return `${head(te('a.b.title'), te('a.b.sub'))}
+    <div class="adm-form">
+      <div class="backup-status ${status ? (status.ok ? 'ok' : 'bad') : ''}">
+        <b>${te('a.b.last')}</b>
+        <span>${status ? `${esc(when)} · ${status.ok ? te('a.b.ok') : te('a.b.failed', { error: status.error || '' })}${status.size ? ` · ${kb(status.size)}` : ''}` : te('a.b.never')}</span>
+      </div>
+      <p class="backup-offsite ${offsite ? 'on' : 'off'}">${offsite ? te('a.b.offsiteOn', { remote: status?.remote || '—' }) : te('a.b.offsiteOff')}</p>
+      <button class="btn btn-primary" data-ad="backup-run" ${view.backupBusy ? 'disabled' : ''}>${te(view.backupBusy ? 'a.b.running' : 'a.b.run')}</button>
+      ${local.length ? `<h3 style="margin-top:24px">${te('a.b.local')}</h3>
+        <div class="adm-table-wrap flush"><table class="adm-table"><tbody>${local.map((f) => `<tr><td class="mono">${esc(f.name)}</td><td>${kb(f.size)}</td>
+          <td class="r"><a class="btn btn-ghost btn-sm" href="/api/admin/backup/download/${encodeURIComponent(f.name)}" download>${te('a.b.download')}</a></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <p class="muted">${te('a.b.restore')}</p>
+    </div>`;
+}
+
+async function runBackupNow() {
+  view.backupBusy = true; render();
+  try {
+    const res = await ctx.api('/admin/backup/run', { method: 'POST' });
+    view.backupBusy = false;
+    show('backups', { backup: res });
+    ctx.toast({ icon: res.status.ok ? 'check' : 'alert', title: te(res.status.ok ? 'a.t.backupDone' : 'a.t.backupFailed'), text: esc(res.status.file || res.status.error || '') });
+  } catch (err) { view.backupBusy = false; render(); fail(err); }
+}
+
+/* ==========================================================================
    Orders
    ========================================================================== */
 async function openOrders(filter = view.filter) {
@@ -614,6 +766,16 @@ function settingsView() {
     </section>
 
     <section class="ed-sec">
+      <h3>${te('a.s.business')} <small>${te('a.s.businessHint')}</small></h3>
+      <div class="ed-grid">
+        <div class="field"><label>${te('a.s.bName')}</label><input name="b_name" maxlength="120" value="${esc(s.business.name)}"/></div>
+        <div class="field"><label>${te('a.s.bEmail')}</label><input name="b_email" type="email" maxlength="120" value="${esc(s.business.email)}"/></div>
+        <div class="field"><label>${te('a.s.bPhone')}</label><input name="b_phone" maxlength="40" value="${esc(s.business.phone)}"/></div>
+        <div class="field"><label>${te('a.s.bAddress')}</label><textarea name="b_address" rows="2" maxlength="300">${esc(s.business.address)}</textarea></div>
+      </div>
+    </section>
+
+    <section class="ed-sec">
       <h3>${te('a.s.notify')}</h3>
       <div class="field"><label>${te('a.s.notifyEmail')}</label><input name="contactEmail" type="email" value="${esc(s.contactEmail)}" placeholder="orders@yourstore.com"/></div>
     </section>
@@ -634,6 +796,7 @@ async function saveSettings(form) {
   const pcts = fd.getAll('promo_pct');
   const body = {
     contactEmail: fd.get('contactEmail').trim(),
+    business: { name: fd.get('b_name').trim(), email: fd.get('b_email').trim(), phone: fd.get('b_phone').trim(), address: fd.get('b_address').trim() },
     shipping: { standard: num('ship_standard'), express: num('ship_express'), overnight: num('ship_overnight'), international: num('ship_international'), freeOver: num('ship_freeOver') },
     tax: { enabled: fd.has('tax_enabled'), states: fd.get('tax_states').split(/[\s,]+/).filter(Boolean) },
     promos: codes.map((code, i) => ({ code, pct: Number(pcts[i]) })).filter((p) => p.code.trim()),
@@ -698,6 +861,9 @@ async function onClick(e) {
     if (a === 'orders') openOrders();
     if (a === 'settings') openSettings();
     if (a === 'users') openUsers();
+    if (a === 'pages') openPages();
+    if (a === 'audit') openAudit();
+    if (a === 'backups') openBackups();
     if (a === 'account') show('account');
     if (a === 'logout') {
       await ctx.api('/auth/logout', { method: 'POST' }).catch(() => {});
@@ -719,6 +885,7 @@ async function onClick(e) {
     if (adm.dataset.admin === 'sec-up') moveSection(adm.dataset.id, -1);
     if (adm.dataset.admin === 'sec-down') moveSection(adm.dataset.id, 1);
     if (adm.dataset.admin === 'sec-delete') deleteSectionItem(adm.dataset.sec, adm.dataset.id);
+    if (adm.dataset.admin === 'page-edit') openPageEditor(adm.dataset.slug);
     return;
   }
 
@@ -737,6 +904,18 @@ async function onClick(e) {
       break;
     }
     case 'sec-delete': deleteSectionItem(view.sec.section, view.sec.id); break;
+    case 'pages': openPages(); break;
+    case 'page-view': ctx.closeOverlays(); ctx.openPage(el.dataset.slug); break;
+    case 'page-edit': openPageEditor(el.dataset.slug); break;
+    case 'page-lang': {
+      collectPage($('[data-form="page"]'));
+      view.pg.lang = el.dataset.langTab;
+      render();
+      $(`[data-lang-tab="${view.pg.lang}"]`)?.focus();
+      break;
+    }
+    case 'audit-more': openAudit(true); break;
+    case 'backup-run': runBackupNow(); break;
     case 'delete': deleteProduct(el.dataset.id); break;
     case 'ed-lang': {
       collectEditor($('[data-form="product"]'));
@@ -804,6 +983,7 @@ async function onSubmit(e) {
     }
     case 'product': saveProduct(form); break;
     case 'section': saveSection(form); break;
+    case 'page': savePageForm(form); break;
     case 'settings': saveSettings(form); break;
     case 'notes':
       try {
@@ -830,6 +1010,11 @@ async function onSubmit(e) {
 }
 
 function onInput(e) {
+  if (view.name === 'pageEdit' && e.target.closest('[data-form="page"]')) {
+    collectPage(e.target.form);
+    $('#page-preview').innerHTML = pagePreview();
+    return;
+  }
   if (view.name !== 'editor' || !e.target.closest('[data-form="product"]')) return;
   if (['short', 'shape', 'hue'].includes(e.target.name) || (view.ed.lang === 'es' && ['name', 'size'].includes(e.target.name))) {
     collectEditor(e.target.form);

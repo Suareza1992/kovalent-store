@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import { db, UPLOAD_DIR, listProducts, getProduct, getSettings, saveSettings, getOrder, parseOrder, listContent } from './db.js';
+import { db, UPLOAD_DIR, listProducts, getProduct, getSettings, saveSettings, getOrder, parseOrder, listContent, getPage, savePage } from './db.js';
+import { PAGE_SLUGS } from './legal-templates.js';
 import { SECTIONS, ICONS, CONTENT_LANGS } from '../public/js/sections.js';
 import { requireUser, requireSuper, hashPassword, verifyPassword, randomPassword, startSession, endSession, publicUser, limiter } from './auth.js';
 import { providers } from './payments.js';
@@ -11,6 +12,8 @@ import * as email from './email.js';
 import { CATEGORIES, COLLECTIONS } from '../public/js/data.js';
 import { US_TAX, round2 } from '../public/js/pricing.js';
 import { fail } from './http.js';
+import { audit, diff, listAudit } from './audit.js';
+import { runBackup, backupStatus, listLocalBackups, localBackupPath, offsiteConfigured } from './backup.js';
 
 export const admin = express.Router();
 
@@ -24,13 +27,20 @@ admin.post('/auth/login', (req, res) => {
   if (!loginLimit(`${req.ip}|${emailAddr}`)) return fail(res, 429, 'err.loginLimit');
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(emailAddr);
   if (!user || !verifyPassword(String(req.body?.password || ''), user.password_hash)) {
+    audit(req, 'auth.login_failed', { email: emailAddr.slice(0, 120) || '(empty)' });
     return fail(res, 401, 'err.login');
   }
   startSession(res, user.id);
+  req.user = publicUser(user);
+  audit(req, 'auth.login');
   res.json({ me: publicUser(user) });
 });
 
-admin.post('/auth/logout', (req, res) => { endSession(req, res); res.json({ ok: true }); });
+admin.post('/auth/logout', (req, res) => {
+  if (req.user) audit(req, 'auth.logout');
+  endSession(req, res);
+  res.json({ ok: true });
+});
 
 admin.use('/admin', requireUser);
 
@@ -42,6 +52,7 @@ admin.put('/admin/me/password', (req, res) => {
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id); // sign out other devices
   startSession(res, user.id);
+  audit(req, 'auth.password');
   res.json({ ok: true });
 });
 
@@ -103,6 +114,8 @@ function cleanProduct(input, existing = {}) {
   return { errors, product };
 }
 
+const PRODUCT_FIELDS = ['name', 'price', 'category', 'collections', 'size', 'ribbon', 'badges', 'tagline', 'description', 'specs', 'instructions', 'compatibility', 'benefits', 'pairs', 'shape', 'hue', 'short'];
+
 function slugify(name) {
   const base = name.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'product';
   return `${base}-${crypto.randomBytes(3).toString('hex')}`;
@@ -114,6 +127,7 @@ admin.post('/admin/products', (req, res) => {
   const id = slugify(product.name);
   const top = db.prepare('SELECT COALESCE(MIN(sort), 0) AS s FROM products').get().s;
   db.prepare('INSERT INTO products (id, data, sort) VALUES (?, ?, ?)').run(id, JSON.stringify({ ...product, id }), top - 1);
+  audit(req, 'product.create', { target: id, summary: product.name, details: { price: ['—', String(product.price)] } });
   res.status(201).json({ product: getProduct(id), products: listProducts() });
 });
 
@@ -123,13 +137,19 @@ admin.put('/admin/products/:id', (req, res) => {
   const { errors, product } = cleanProduct(req.body || {}, existing);
   if (Object.keys(errors).length) return fail(res, 400, 'err.fields', { fields: errors });
   db.prepare('UPDATE products SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify({ ...product, id: existing.id }), existing.id);
+  const changes = diff(existing, product, PRODUCT_FIELDS) || {};
+  if ((existing.images || []).join() !== product.images.join()) changes.photos = [String(existing.images?.length || 0), String(product.images.length)];
+  if (JSON.stringify(existing.tr || {}) !== JSON.stringify(product.tr)) changes.translations = ['…', 'updated'];
+  audit(req, 'product.update', { target: existing.id, summary: product.name, details: Object.keys(changes).length ? changes : null });
   res.json({ product: getProduct(existing.id), products: listProducts() });
 });
 
 // Soft delete: the product disappears from the store, but past orders keep their snapshot.
 admin.delete('/admin/products/:id', (req, res) => {
+  const before = getProduct(req.params.id);
   const changed = db.prepare('UPDATE products SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted = 0').run(req.params.id).changes;
   if (!changed) return fail(res, 404, 'err.productNotFound');
+  audit(req, 'product.delete', { target: req.params.id, summary: before?.name || req.params.id });
   res.json({ products: listProducts() });
 });
 
@@ -157,7 +177,12 @@ function cleanItem(section, input = {}) {
   return { errors, data };
 }
 
-const contentRow = (id) => db.prepare('SELECT id, section, sort FROM content WHERE id = ?').get(id);
+const contentRow = (id) => db.prepare('SELECT id, section, sort, data FROM content WHERE id = ?').get(id);
+// A short label for the log: the Spanish title / question / label, or the shared value.
+const itemLabel = (section, data) => {
+  const d = typeof data === 'string' ? JSON.parse(data) : data;
+  return `${section}: ${d.es?.title || d.es?.question || d.es?.label || d.shared?.value || ''}`.slice(0, 120);
+};
 
 admin.post('/admin/content', (req, res) => {
   const section = String(req.body?.section || '');
@@ -167,7 +192,8 @@ admin.post('/admin/content', (req, res) => {
   const { errors, data } = cleanItem(section, req.body.data);
   if (Object.keys(errors).length) return fail(res, 400, 'err.fields', { fields: errors });
   const next = db.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS s FROM content WHERE section = ?').get(section).s;
-  db.prepare('INSERT INTO content (section, sort, data) VALUES (?, ?, ?)').run(section, next, JSON.stringify(data));
+  const { lastInsertRowid } = db.prepare('INSERT INTO content (section, sort, data) VALUES (?, ?, ?)').run(section, next, JSON.stringify(data));
+  audit(req, 'content.create', { target: lastInsertRowid, summary: itemLabel(section, data) });
   res.status(201).json({ content: listContent() });
 });
 
@@ -177,6 +203,13 @@ admin.put('/admin/content/:id', (req, res) => {
   const { errors, data } = cleanItem(row.section, req.body?.data);
   if (Object.keys(errors).length) return fail(res, 400, 'err.fields', { fields: errors });
   db.prepare('UPDATE content SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(data), row.id);
+  const old = JSON.parse(row.data);
+  const changes = {};
+  for (const bucket of ['shared', ...CONTENT_LANGS]) {
+    const d = diff(old[bucket] || {}, data[bucket]);
+    if (d) for (const [k, v] of Object.entries(d)) changes[`${bucket}.${k}`] = v;
+  }
+  audit(req, 'content.update', { target: row.id, summary: itemLabel(row.section, data), details: Object.keys(changes).length ? changes : null });
   res.json({ content: listContent() });
 });
 
@@ -191,13 +224,16 @@ admin.post('/admin/content/:id/move', (req, res) => {
     [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
     const setSort = db.prepare('UPDATE content SET sort = ? WHERE id = ?');
     ordered.forEach((id, n) => setSort.run(n, id)); // renumber so sorts stay clean
+    audit(req, 'content.move', { target: row.id, summary: itemLabel(row.section, row.data), details: { position: [String(i + 1), String(j + 1)] } });
   }
   res.json({ content: listContent() });
 });
 
 admin.delete('/admin/content/:id', (req, res) => {
+  const row = contentRow(req.params.id);
   const changed = db.prepare('DELETE FROM content WHERE id = ?').run(req.params.id).changes;
   if (!changed) return fail(res, 404, 'err.itemNotFound');
+  audit(req, 'content.delete', { target: row.id, summary: itemLabel(row.section, row.data) });
   res.json({ content: listContent() });
 });
 
@@ -238,19 +274,26 @@ admin.patch('/admin/orders/:id', (req, res) => {
   const order = getOrder(req.params.id);
   if (!order) return fail(res, 404, 'err.orderNotFound');
   const { action, tracking, notes } = req.body || {};
-  if (notes !== undefined) db.prepare('UPDATE orders SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(text(notes, 2000), order.id);
+  const label = `${order.number} · $${order.totals.total.toFixed(2)}`;
+  if (notes !== undefined) {
+    db.prepare('UPDATE orders SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(text(notes, 2000), order.id);
+    audit(req, 'order.notes', { target: order.number, summary: label });
+  }
 
   if (action === 'mark_paid') {
     if (order.status !== 'pending_payment') return fail(res, 400, 'err.onlyPending');
     markPaid(order, `manual:${req.user.email}`);
+    audit(req, 'order.mark_paid', { target: order.number, summary: label, details: { method: [order.payment_method, 'manual'] } });
   } else if (action === 'mark_shipped') {
     if (order.status !== 'paid') return fail(res, 400, 'err.onlyPaid');
     db.prepare(`UPDATE orders SET status = 'shipped', tracking = ?, shipped_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .run(text(tracking, 120) || null, order.id);
     email.orderShipped(getOrder(order.id));
+    audit(req, 'order.mark_shipped', { target: order.number, summary: label, details: tracking ? { tracking: ['—', text(tracking, 120)] } : null });
   } else if (action === 'cancel') {
     if (!['pending_payment', 'paid'].includes(order.status)) return fail(res, 400, 'err.noCancel');
     db.prepare(`UPDATE orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(order.id);
+    audit(req, 'order.cancel', { target: order.number, summary: label, details: { status: [order.status, 'cancelled'] } });
   } else if (action) {
     return fail(res, 400, 'err.generic');
   }
@@ -275,6 +318,13 @@ admin.put('/admin/settings', (req, res) => {
   const money = (v, fallback) => { const n = round2(Number(v)); return n >= 0 && n <= 10000 ? n : fallback; };
   const contactEmail = text(b.contactEmail, 120);
   if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(contactEmail)) return fail(res, 400, 'err.notifyEmail');
+  const business = {
+    name: text(b.business?.name, 120),
+    email: text(b.business?.email, 120),
+    phone: text(b.business?.phone, 40),
+    address: text(b.business?.address, 300),
+  };
+  if (business.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(business.email)) return fail(res, 400, 'err.businessEmail');
 
   const promos = [];
   for (const p of Array.isArray(b.promos) ? b.promos.slice(0, 30) : []) {
@@ -285,6 +335,7 @@ admin.put('/admin/settings', (req, res) => {
   const rate = Number(b.mercadopago?.usdRate);
   const next = {
     contactEmail,
+    business,
     shipping: Object.fromEntries(Object.keys(cur.shipping).map((k) => [k, money(b.shipping?.[k], cur.shipping[k])])),
     tax: {
       enabled: Boolean(b.tax?.enabled),
@@ -302,6 +353,16 @@ admin.put('/admin/settings', (req, res) => {
     },
   };
   saveSettings(next);
+  const flat = (o) => ({
+    ...Object.fromEntries(Object.entries(o.shipping).map(([k, v]) => [`shipping.${k}`, v])),
+    'tax.enabled': o.tax.enabled, 'tax.states': o.tax.states.join(','),
+    promos: o.promos.map((p) => `${p.code} ${p.pct}%`).join(', '),
+    ...Object.fromEntries(Object.entries(o.manual).flatMap(([k, m]) => [[`${k}.enabled`, m.enabled], [`${k}.instructions`, m.instructions]])),
+    'mercadopago.currency': o.mercadopago.currency, 'mercadopago.usdRate': o.mercadopago.usdRate,
+    contactEmail: o.contactEmail,
+    ...Object.fromEntries(Object.entries(o.business).map(([k, v]) => [`business.${k}`, v])),
+  });
+  audit(req, 'settings.update', { details: diff(flat(cur), flat(next)) });
   res.json({ settings: getSettings() });
 });
 
@@ -319,6 +380,7 @@ admin.post('/admin/users', requireSuper, (req, res) => {
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(emailAddr)) return fail(res, 409, 'err.userExists');
   const password = randomPassword();
   db.prepare("INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, 'admin', ?)").run(emailAddr, name, hashPassword(password));
+  audit(req, 'user.create', { summary: `${name} <${emailAddr}>` });
   res.status(201).json({ tempPassword: password }); // shown once to the superadmin to pass along
 });
 
@@ -328,11 +390,64 @@ admin.post('/admin/users/:id/reset', requireSuper, (req, res) => {
   const password = randomPassword();
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), user.id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  audit(req, 'user.reset', { target: user.id, summary: `${user.name} <${user.email}>` });
   res.json({ tempPassword: password });
 });
 
 admin.delete('/admin/users/:id', requireSuper, (req, res) => {
+  const user = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
   const changed = db.prepare("DELETE FROM users WHERE id = ? AND role = 'admin'").run(req.params.id).changes;
   if (!changed) return fail(res, 404, 'err.adminNotFound');
+  audit(req, 'user.delete', { target: user.id, summary: `${user.name} <${user.email}>` });
   res.json({ ok: true });
+});
+
+/* ==========================================================================
+   Legal / contact pages
+   ========================================================================== */
+admin.put('/admin/pages/:slug', (req, res) => {
+  const slug = req.params.slug;
+  if (!PAGE_SLUGS.includes(slug)) return fail(res, 404, 'err.pageNotFound');
+  const before = getPage(slug);
+  const input = req.body?.data || {};
+  const data = Object.fromEntries(CONTENT_LANGS.map((l) => [l, { title: text(input[l]?.title, 80), body: text(input[l]?.body, 20000) }]));
+  if (!data.es.title || !data.es.body) return fail(res, 400, 'err.pageFields');
+  savePage(slug, data);
+  const changes = {};
+  for (const l of CONTENT_LANGS) {
+    if (before[l]?.title !== data[l].title) changes[`${l}.title`] = [before[l]?.title || '—', data[l].title || '—'];
+    if (before[l]?.body !== data[l].body) changes[`${l}.body`] = ['…', `${data[l].body.length} chars`];
+  }
+  audit(req, 'page.update', { target: slug, summary: data.es.title, details: Object.keys(changes).length ? changes : null });
+  res.json({ page: getPage(slug) });
+});
+
+/* ==========================================================================
+   Backups (superadmin only: archives contain customer data)
+   ========================================================================== */
+admin.get('/admin/backup', requireSuper, (_req, res) => {
+  res.json({ status: backupStatus(), offsite: offsiteConfigured(), local: listLocalBackups() });
+});
+
+admin.post('/admin/backup/run', requireSuper, async (req, res, next) => {
+  try {
+    const status = await runBackup('manual');
+    audit(req, 'backup.run', { summary: status.file || '', details: status.ok ? null : { error: ['—', status.error] } });
+    res.json({ status, offsite: offsiteConfigured(), local: listLocalBackups() });
+  } catch (err) { next(err); }
+});
+
+admin.get('/admin/backup/download/:name', requireSuper, (req, res) => {
+  const file = localBackupPath(req.params.name);
+  if (!file || !fs.existsSync(file)) return fail(res, 404, 'err.notFound');
+  audit(req, 'backup.download', { summary: req.params.name });
+  res.set('Cache-Control', 'no-store').download(file, req.params.name);
+});
+
+/* ==========================================================================
+   Activity log (superadmin only)
+   ========================================================================== */
+admin.get('/admin/audit', requireSuper, (req, res) => {
+  const before = Number(req.query.before) || null;
+  res.json({ entries: listAudit({ before, limit: 100 }) });
 });

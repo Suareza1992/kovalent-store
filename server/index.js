@@ -5,6 +5,7 @@ import { loadUser, ensureSuperadmin } from './auth.js';
 import { shop, webhooks } from './shop.js';
 import { admin } from './admin.js';
 import { fail } from './http.js';
+import { startBackupSchedule } from './backup.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const isProd = process.env.NODE_ENV === 'production';
@@ -53,8 +54,11 @@ app.use('/api', admin);
 app.use('/api', (_req, res) => fail(res, 404, 'err.notFound'));
 
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '30d', immutable: true, fallthrough: false }));
-app.use(express.static(PUBLIC, { maxAge: isProd ? '1h' : 0 }));
-app.get('/admin', (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
+// HTML/JS/CSS must be revalidated on every load: after a deploy, nobody (shopper or admin)
+// should keep running old code against the new server. ETags make unchanged files a cheap 304.
+const revalidate = { etag: true, lastModified: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') };
+app.use(express.static(PUBLIC, revalidate));
+app.get(['/admin', '/legal/:slug'], (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html'), { headers: { 'Cache-Control': 'no-cache' } }));
 
 app.use((err, _req, res, _next) => {
   const status = err.status || err.statusCode;
@@ -65,5 +69,6 @@ app.use((err, _req, res, _next) => {
 });
 
 ensureSuperadmin();
+startBackupSchedule();
 const port = Number(process.env.PORT) || 5195;
 app.listen(port, () => console.log(`Kovalent running on http://localhost:${port}`));

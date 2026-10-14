@@ -199,7 +199,31 @@
 .temp-pass span { font-size: 13px; color: var(--muted); }
 .temp-pass .btn { justify-self: start; }
 
+/* ---------- pages editor / activity log / backups ---------- */
+.page-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.page-edit-grid > .field { grid-column: auto; } /* undo the checkout form's span-6 rule */
+.page-edit-grid textarea { font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+.page-help { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
+.page-preview { padding: 18px 20px; max-height: 560px; overflow: auto; border: 1px solid var(--line-2); border-radius: 10px; background: var(--charcoal); font-size: 14px; }
+.page-preview h3 { font-size: 16px; }
+.audit-table td { vertical-align: top; }
+.audit-table tr.warn-row td { background: rgba(255, 92, 122, .06); }
+.audit-diff { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
+.audit-diff li { margin: 2px 0; word-break: break-word; }
+.audit-diff span { font-family: var(--mono); color: var(--faint); margin-right: 4px; }
+.adm-more { text-align: center; padding: 0 28px 24px; }
+.adm-table-wrap.flush { padding: 8px 0 12px; }
+.backup-status { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; border-radius: 12px; background: var(--charcoal); border: 1px solid var(--line-2); margin-bottom: 14px; }
+.backup-status.ok { border-color: rgba(53, 224, 161, .4); }
+.backup-status.bad { border-color: rgba(255, 92, 122, .5); }
+.backup-status b { font-family: var(--display); color: var(--white); }
+.backup-status span { color: var(--muted); font-size: 14px; }
+.backup-offsite { padding: 12px 14px; border-radius: 10px; font-size: 13.5px; margin: 0 0 18px; }
+.backup-offsite.on { background: rgba(53, 224, 161, .08); color: var(--ok); }
+.backup-offsite.off { background: rgba(255, 201, 77, .1); color: var(--gold); border: 1px dashed rgba(255, 201, 77, .4); }
+
 @media (max-width: 760px) {
+  .page-edit-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-bar { bottom: 10px; }
   .trust-item.dyn { padding-right: 124px; } /* room for the edit strip */
   .ab-who { display: none; }

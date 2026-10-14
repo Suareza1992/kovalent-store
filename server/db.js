@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { PRODUCTS as SEED_PRODUCTS } from '../public/js/data.js';
 import { SECTIONS, SECTION_KEYS } from '../public/js/sections.js';
 import { translate } from '../public/js/i18n.js';
+import { LEGAL_TEMPLATES, PAGE_SLUGS } from './legal-templates.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
@@ -71,6 +72,27 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS content_section ON content(section, sort);
 
+  -- Who changed what, when. Written by server/audit.js; readable by the superadmin.
+  CREATE TABLE IF NOT EXISTS audit (
+    id         INTEGER PRIMARY KEY,
+    at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id    INTEGER,
+    user_email TEXT,
+    ip         TEXT,
+    action     TEXT NOT NULL,             -- e.g. product.update, order.mark_paid, auth.login_failed
+    target     TEXT,                      -- id of the thing acted on
+    summary    TEXT,                      -- human-readable: product name, order number…
+    details    TEXT                       -- JSON: { field: [before, after] } or extra context
+  );
+  CREATE INDEX IF NOT EXISTS audit_at ON audit(at);
+
+  -- Editable legal / contact pages (terms, privacy, returns, contact), one row per page.
+  CREATE TABLE IF NOT EXISTS pages (
+    slug       TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,             -- JSON: { es: { title, body }, en: {...}, pt: {...} }
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -120,6 +142,13 @@ if (Number(db.prepare("SELECT value FROM settings WHERE key = 'schema'").get()?.
   db.prepare("UPDATE settings SET value = '3' WHERE key = 'schema'").run();
 }
 
+// Migration 4 (Oct 2026): legal / contact pages, seeded from starting templates.
+if (Number(db.prepare("SELECT value FROM settings WHERE key = 'schema'").get()?.value) < 4) {
+  const insert = db.prepare('INSERT OR IGNORE INTO pages (slug, data) VALUES (?, ?)');
+  for (const slug of PAGE_SLUGS) insert.run(slug, JSON.stringify(LEGAL_TEMPLATES[slug]));
+  db.prepare("UPDATE settings SET value = '4' WHERE key = 'schema'").run();
+}
+
 export function listProducts() {
   return db.prepare('SELECT id, data FROM products WHERE deleted = 0 ORDER BY sort, rowid').all()
     .map((r) => ({ ...JSON.parse(r.data), id: r.id }));
@@ -134,6 +163,8 @@ export function getProduct(id) {
 
 export const DEFAULT_SETTINGS = {
   contactEmail: '',
+  // Shown on the legal / contact pages (tokens {business}, {email}, {phone}, {address}).
+  business: { name: '', email: '', phone: '', address: '' },
   shipping: { standard: 6.95, express: 14.95, overnight: 29.95, international: 24.95, freeOver: 75 },
   tax: { enabled: true, states: [] }, // empty list = collect in every state in the rate table
   promos: [],
@@ -153,6 +184,7 @@ export function getSettings() {
     ...d,
     ...saved,
     shipping: { ...d.shipping, ...saved.shipping },
+    business: { ...d.business, ...saved.business },
     tax: { ...d.tax, ...saved.tax },
     manual: Object.fromEntries(Object.entries(d.manual).map(([k, v]) => [k, { ...v, ...saved.manual?.[k] }])),
     mercadopago: { ...d.mercadopago, ...saved.mercadopago },
@@ -188,4 +220,15 @@ export function listContent() {
     if (SECTIONS[row.section]) out[row.section].push({ id: row.id, section: row.section, data: JSON.parse(row.data) });
   }
   return out;
+}
+
+/* ---------- legal / contact pages ---------- */
+
+export function getPage(slug) {
+  const row = db.prepare('SELECT slug, data, updated_at FROM pages WHERE slug = ?').get(slug);
+  return row ? { slug: row.slug, updated: row.updated_at, ...JSON.parse(row.data) } : null;
+}
+
+export function savePage(slug, data) {
+  db.prepare('UPDATE pages SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE slug = ?').run(JSON.stringify(data), slug);
 }

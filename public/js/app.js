@@ -3,6 +3,7 @@ import { productArt, heroArt, LOGO_MARK } from './art.js';
 import { computeTotals, COUNTRIES, US_STATES, SHIPPING_METHODS, shippingOptions, isDomestic } from './pricing.js';
 import { LANGS, DEFAULT_LANG, isLang, translate, hasKey, localizeProduct, formatMoney, countryName } from './i18n.js';
 import { SECTIONS, SECTION_KEYS, ICONS, localizeItem } from './sections.js';
+import { renderPage } from './pages.js';
 
 /* ==========================================================================
    Language
@@ -209,6 +210,7 @@ function setLang(next) {
   if (state.overlay === 'cart') renderCart();
   if (state.overlay === 'product') rerenderProductKeepScroll();
   if (state.overlay === 'checkout') renderCheckout();
+  if (state.overlay === 'page') renderPageView();
   langListeners.forEach((fn) => fn(lang));
 }
 
@@ -441,7 +443,7 @@ function openOverlay(name) {
   requestAnimationFrame(() => (el.querySelector('[data-autofocus]') || el.querySelector('button, input, [tabindex]'))?.focus({ preventScroll: true }));
 }
 function overlayEl(name) {
-  return { cart: $('#cart-drawer'), product: $('#product-modal'), checkout: $('#checkout-modal'), admin: $('#admin-modal') }[name];
+  return { cart: $('#cart-drawer'), product: $('#product-modal'), checkout: $('#checkout-modal'), admin: $('#admin-modal'), page: $('#page-modal') }[name];
 }
 function hideOverlay(name) {
   const el = overlayEl(name);
@@ -451,6 +453,7 @@ function hideOverlay(name) {
 function closeOverlays() {
   if (!state.overlay) return;
   if (state.overlay === 'checkout' && co.view) Object.assign(co, freshCheckout());
+  if (state.overlay === 'page' && location.pathname.startsWith('/legal/')) history.replaceState(null, '', '/');
   hideOverlay(state.overlay);
   state.overlay = null;
   $('#scrim').hidden = true;
@@ -797,7 +800,7 @@ function stepReview() {
       <div class="rb"><h5>${esc(t('rv.delivery'))} <button type="button" data-goto="1">${esc(t('rv.edit'))}</button></h5><b>${esc(t(`ship.${tot.method}`))}</b> · ${esc(t(`eta.${tot.method}`))}${m.domestic ? `<br/>${esc(t('rv.arrivesBy'))} <b>${arrival(m.days)}</b>` : ''}</div>
       <div class="rb"><h5>${esc(t('rv.payment'))} <button type="button" data-goto="2">${esc(t('rv.edit'))}</button></h5><b>${esc(pay ? payLabel(pay.id) : '—')}</b><br/>${esc(t(pay?.type === 'manual' ? 'rv.manualNote' : 'rv.onlineNote'))}</div>
     </div>
-    <p class="terms">${esc(t('co.terms'))}</p>
+    <p class="terms">${t('co.terms', { terms: pageLink('terms', { newTab: true }), privacy: pageLink('privacy', { newTab: true }) })}</p>
     <div class="co-actions">
       <button type="button" class="link-btn" data-goto="2">${ICON.back} ${esc(t('co.backPayment'))}</button>
       <button type="submit" class="btn btn-primary" ${co.placing ? 'disabled' : ''}>
@@ -1004,6 +1007,48 @@ function handlePaymentReturn() {
 }
 
 /* ==========================================================================
+   Legal / contact pages (/legal/terms, /legal/privacy, /legal/returns, /legal/contact)
+   Text comes from the database; business details are filled in by renderPage().
+   ========================================================================== */
+const PAGE_SLUGS = ['terms', 'privacy', 'returns', 'contact'];
+const pageCache = {};
+let currentPage = null;
+// newTab: used inside checkout, so reading the terms never interrupts an order in progress.
+const pageLink = (slug, { newTab = false } = {}) => `<a href="/legal/${slug}" data-page="${slug}"${newTab ? ' target="_blank" rel="noopener"' : ''}>${esc(t(`page.${slug}`))}</a>`;
+
+async function openPage(slug, { fresh = false, push = true } = {}) {
+  if (!PAGE_SLUGS.includes(slug)) return;
+  currentPage = slug;
+  if (fresh || !pageCache[slug]) {
+    try { pageCache[slug] = await api(`/pages/${slug}`); } catch (err) { toast({ icon: 'alert', title: esc(err.message) }); return; }
+  }
+  renderPageView();
+  if (push && location.pathname !== `/legal/${slug}`) history.pushState(null, '', `/legal/${slug}`);
+  if (state.overlay !== 'page') openOverlay('page');
+  $('#page-card').scrollTop = 0;
+}
+
+function renderPageView() {
+  const slug = currentPage;
+  const data = pageCache[slug];
+  if (!data) return;
+  const p = data.page;
+  const title = p[lang]?.title || p.es.title;
+  const body = p[lang]?.body || p.es.body;
+  const updated = new Date(`${p.updated.replace(' ', 'T')}Z`).toLocaleDateString(LANGS[lang].locale, { year: 'numeric', month: 'long', day: 'numeric' });
+  const b = data.business || {};
+  $('#page-card').innerHTML = `
+    <button class="icon-btn modal-close" data-action="close-overlays" aria-label="${esc(t('close'))}">${ICON.close}</button>
+    <article class="legal-page">
+      ${state.me ? `<div class="admin-row pm-admin"><span>${esc(t('admin.label'))}</span><button class="adm-btn" data-admin="page-edit" data-slug="${slug}">${esc(t('page.edit'))}</button></div>` : ''}
+      <p class="kicker">Kovalent</p>
+      <h2 id="page-title">${esc(title)}</h2>
+      ${renderPage(body, { business: b.name, email: b.email, phone: b.phone, address: b.address, updated }, t('page.pending'))}
+      <nav class="legal-links in-page">${PAGE_SLUGS.filter((x) => x !== slug).map(pageLink).join('')}</nav>
+    </article>`;
+}
+
+/* ==========================================================================
    Toasts
    Callers pass HTML-safe strings (product fields are pre-escaped).
    ========================================================================== */
@@ -1113,6 +1158,7 @@ function onClick(e) {
   if ((el = q('[data-lang]'))) { setLangMenu(false); setLang(el.dataset.lang); $('#lang-button').focus(); return; }
   if (!q('#lang')) setLangMenu(false);
   if (q('[data-admin]') || q('#admin-modal') || q('.admin-bar')) return; // handled by admin.js
+  if ((el = q('[data-page]')) && el.target !== '_blank') { e.preventDefault(); openPage(el.dataset.page); return; }
 
   if ((el = q('[data-add]'))) {
     const qty = el.hasAttribute('data-modal-add') ? modal.qty : 1;
@@ -1265,6 +1311,7 @@ const ctx = {
   SECTIONS, ICONS,
   content: () => config.content, // raw items (all languages), for the section editor
   setContent(content) { config.content = content; renderSections(); },
+  openPage, renderPage, pageCache, PAGE_SLUGS,
   setMe(me) {
     state.me = me;
     document.body.classList.toggle('is-admin', Boolean(me));
@@ -1322,6 +1369,8 @@ async function init() {
   renderGrid();
   renderBadge();
   if (state.me || location.pathname === '/admin') loadAdmin();
+  const legal = location.pathname.match(/^\/legal\/([a-z]+)$/);
+  if (legal) openPage(legal[1], { push: false });
   handlePaymentReturn();
 }
 

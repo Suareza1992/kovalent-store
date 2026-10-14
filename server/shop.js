@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import express from 'express';
-import { db, listProducts, getProduct, getSettings, getOrder, listContent } from './db.js';
+import { db, listProducts, getProduct, getSettings, getOrder, listContent, getPage } from './db.js';
+import { PAGE_SLUGS } from './legal-templates.js';
 import { limiter, publicUser } from './auth.js';
 import { providers, create, verify, stripeEvent, mpPayment, mpPaymentMatches, mpLocalAmount } from './payments.js';
 import * as email from './email.js';
@@ -21,7 +22,7 @@ export function paymentMethods(settings = getSettings()) {
 export const methodLabel = (id, lang) => translate(lang, id === 'stripe' ? 'pay.stripe.short' : `pay.${id}`);
 
 function publicSettings(s) {
-  return { shipping: s.shipping, tax: s.tax, hasPromos: s.promos.length > 0 };
+  return { shipping: s.shipping, tax: s.tax, hasPromos: s.promos.length > 0, business: s.business };
 }
 
 /* ---------- catalog ---------- */
@@ -35,6 +36,13 @@ shop.get('/bootstrap', (req, res) => {
     payments: paymentMethods(settings),
     me: publicUser(req.user),
   });
+});
+
+// Legal / contact pages (all languages; the browser picks one and fills in the business details).
+shop.get('/pages/:slug', (req, res) => {
+  const page = PAGE_SLUGS.includes(req.params.slug) && getPage(req.params.slug);
+  if (!page) return fail(res, 404, 'err.pageNotFound');
+  res.set('Cache-Control', 'no-cache').json({ page, business: getSettings().business });
 });
 
 const promoLimit = limiter({ windowMs: 10 * 60e3, max: 20 });

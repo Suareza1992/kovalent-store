@@ -33,7 +33,9 @@ Copy `.env.example` to `.env` to start. Your local `.env` already has a generate
 | Add / edit / delete products, photos, prices | ✓ | ✓ |
 | Orders: confirm transfers, mark shipped, cancel, notes | ✓ | ✓ |
 | Settings: shipping rates, tax, promo codes, Zelle/ATH Móvil/bank instructions, Mercado Pago rate | ✓ | ✓ |
+| Legal & contact pages, business details | ✓ | ✓ |
 | Add / remove admins, reset their passwords | | ✓ |
+| Activity log, backups (download / run) | | ✓ |
 | Payment provider keys (server environment variables) | | ✓ |
 
 Admins are created by the superadmin under **Team**. A temporary password is shown once, and the admin changes it under **Account**.
@@ -60,6 +62,29 @@ If a provider is down when a customer places an order, that order is cancelled a
 3. Set the environment variables: `NODE_ENV=production`, `PUBLIC_URL=https://your-domain`, `SUPERADMIN_*`, plus the provider keys you're using (see `.env.example`).
 4. Point the Stripe webhook at `https://your-domain/api/webhooks/stripe`.
 5. Optional order emails: create a [Resend](https://resend.com) account, verify the domain, then set `RESEND_API_KEY` and `MAIL_FROM`.
+6. **Off-site backups:** set `BACKUP_S3_*` (see "Backups" below). Until then, backups exist only on the server's own volume.
+
+## Backups
+
+**What:** every night (and whenever the superadmin clicks **Copias → Hacer copia ahora**) the server writes one
+`kovalent-backup-YYYY-MM-DD-HHMM.tar.gz` containing `kovalent.db` (a consistent copy made with `VACUUM INTO`,
+safe while the site runs), every uploaded photo, and `backup.json` (date + counts). The newest 7 stay in
+`DATA_DIR/backups`; the superadmin can download them from the Backups panel.
+
+**Off-site (do this before launch):** a backup on the same volume doesn't survive losing that volume.
+1. Create a **private** bucket on [Cloudflare R2](https://developers.cloudflare.com/r2/) (free up to 10 GB) or Backblaze B2.
+2. Create an API token/key with write access to that bucket only.
+3. Add a **lifecycle rule**: delete objects under `kovalent/` after 30 days.
+4. Set `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET`, `BACKUP_S3_REGION` in Railway.
+5. In the admin, **Copias → Hacer copia ahora** and check that the panel says "Copia externa: ACTIVADA" and the file appears in the bucket.
+
+**Restore:**
+1. Download the archive (from the panel, or from the bucket).
+2. Unpack it: `tar -xzf kovalent-backup-….tar.gz`.
+3. Stop the service, replace `DATA_DIR/kovalent.db` (delete any `kovalent.db-wal` / `-shm` next to it) and copy `uploads/` into `DATA_DIR/uploads/`.
+4. Start the service. Sign in and spot-check products and orders.
+
+**Practice a restore once on your laptop** (set `DATA_DIR` to a scratch folder) so it isn't new the day you need it.
 
 ## Structure
 
@@ -72,6 +97,9 @@ server/
   admin.js      staff API: products, photo uploads, orders, settings, team
   payments.js   Stripe / PayPal / Mercado Pago (REST, no SDKs)
   email.js      optional Resend emails (receipt, transfer instructions, shipped, staff alert)
+  audit.js      activity log (who changed what, when)
+  backup.js     nightly .tar.gz backups + optional off-site upload (S3-compatible, SigV4)
+  legal-templates.js  starting texts for the legal / contact pages
 public/
   index.html, css/styles.css, css/admin.css
   js/app.js     storefront: catalog, search, cart, guest checkout, payment returns
@@ -80,6 +108,11 @@ public/
   js/i18n.js    every UI string, error code and email in es / en / pt, plus product-text fallback
   js/data.js    categories, launch catalog in 3 languages (first-boot import)
   js/art.js     generated product art (used until a product has photos)
+  js/sections.js schema for the dynamic home-page sections
+  js/pages.js   safe renderer for the legal / contact pages
+docs/
+  LEARN-dynamic-sections.md  lesson: how the dynamic sections work (+ exercises)
+  POST-LAUNCH.md             what to build after launch, in priority order
 ```
 
 ## Dynamic home-page sections
@@ -88,6 +121,20 @@ Hero stats, hero callouts, trust badges, About highlights, About stats, the poli
 are stored in the database (`content` table) and rendered by JavaScript, so staff edit them on the page
 (✎ ↑ ↓ ✕ and "+ Add" appear when signed in). The schema in `public/js/sections.js` drives validation,
 the edit form and the item limits. **Full walkthrough with exercises: [docs/LEARN-dynamic-sections.md](docs/LEARN-dynamic-sections.md).**
+
+## Legal & contact pages
+
+`/legal/terms`, `/legal/privacy`, `/legal/returns` and `/legal/contact` are stored in the `pages` table (ES/EN/PT) and edited
+in the admin (**Páginas**, or **Editar página** on the page itself, with a live preview). Tokens `{business}` `{email}` `{phone}`
+`{address}` `{updated}` are filled from **Ajustes → Datos del negocio**; anything missing, and every `[PENDIENTE: …]` note,
+shows as a highlighted marker. The texts in `server/legal-templates.js` are **starting templates, not legal advice**:
+have them reviewed for the countries the store sells to. Footer and checkout link to them (checkout opens them in a new tab).
+
+## Activity log
+
+Every admin action (products, home-page items, pages, orders, settings, team, backups) and every sign-in attempt,
+including failed ones, is written to the `audit` table with who, when, IP and a before → after diff. The superadmin
+reads it under **Actividad**. Entries older than a year are removed automatically.
 
 ## Translations
 
@@ -113,6 +160,7 @@ Real reviews need a review system (or an import from wherever the client collect
 - Uploads are checked by their actual bytes (JPG/PNG/WebP only, max 8 MB), get random filenames and are served with `nosniff`. The browser downscales photos to 1600px and strips camera metadata, including GPS, before uploading.
 - Admin-entered text is escaped before rendering. A strict CSP (`script-src 'self'`) blocks inline scripts as a second layer.
 - Deleting a product hides it from the store; past orders keep their own snapshot of what was bought.
+- HTML/JS/CSS are served with `Cache-Control: no-cache` (+ ETag), so after a deploy every browser picks up the new code on its next load instead of running stale admin code against a new API. Uploaded photos have random names and are cached for 30 days.
 - The product API replaces all editable fields on save (the editor always sends the full product). Scripts calling `PUT /api/admin/products/:id` directly must send the whole product too.
 
 ## Responsive breakpoints
@@ -143,4 +191,5 @@ All breakpoints are in the "Responsive layer" block at the end of `public/css/st
   - Zelle / ATH Móvil orders show as **Awaiting transfer**. Check your bank app, then open the order and tap **Payment received**; the customer gets a confirmation email.
   - Once it's shipped, add the tracking number and tap **Mark as shipped**.
 - **Home page text:** the trust badges, FAQ, policies, About points and stats each show ✎ (edit), ↑ ↓ (reorder) and ✕ (delete), plus an "+ Add" button. Fill in Spanish first; the English and Portuguese tabs are optional.
+- **Pages:** Terms, Privacy, Shipping & Returns and Contact are under **Páginas** in the toolbar. Fill in **Ajustes → Datos del negocio** first; anything still missing shows highlighted in yellow.
 - **Settings:** shipping prices, free-shipping threshold, sales tax states, promo codes, and your Zelle / ATH Móvil instructions.

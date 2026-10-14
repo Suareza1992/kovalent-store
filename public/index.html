@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="/css/styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpolygon points='20,2 36,11 36,29 20,38 4,29 4,11' fill='%23121212' stroke='%2300E5FF' stroke-width='3'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -183,11 +183,12 @@
         <p data-i18n="footer.text"></p>
       </div>
       <div><h4 data-i18n="footer.shop"></h4><button data-collection="protection" data-i18n="col.protection"></button><button data-collection="ceramic" data-i18n="col.ceramic"></button><button data-collection="polishing" data-i18n="col.polishing"></button><button data-collection="accessories" data-i18n="col.accessories"></button></div>
-      <div><h4 data-i18n="footer.support"></h4><button data-scroll="faq" data-i18n="footer.faq"></button><button data-scroll="faq" data-i18n="footer.returns"></button><button data-scroll="faq" data-i18n="footer.guarantee"></button></div>
+      <div><h4 data-i18n="footer.support"></h4><button data-scroll="faq" data-i18n="footer.faq"></button><a href="/legal/returns" data-page="returns" data-i18n="page.returns"></a><a href="/legal/contact" data-page="contact" data-i18n="page.contact"></a></div>
       <div><h4 data-i18n="footer.company"></h4><button data-scroll="about" data-i18n="nav.about"></button><button data-scroll="about" data-i18n="about.pt2"></button></div>
     </div>
     <div class="footer-base">
       <span data-i18n="footer.rights"></span>
+      <nav class="legal-links" data-i18n-attr="aria-label:page.legalNav"><a href="/legal/terms" data-page="terms" data-i18n="page.terms"></a><a href="/legal/privacy" data-page="privacy" data-i18n="page.privacy"></a><a href="/legal/returns" data-page="returns" data-i18n="page.returns"></a><a href="/legal/contact" data-page="contact" data-i18n="page.contact"></a></nav>
       <span class="pay-icons"><span>VISA</span><span>MC</span><span>AMEX</span><span>PAYPAL</span><span>MERCADO PAGO</span></span>
     </div>
   </footer>
@@ -213,12 +214,16 @@
     <div class="modal-card checkout-card" id="checkout-card"></div>
   </div>
 
+  <div class="modal" id="page-modal" role="dialog" aria-modal="true" aria-labelledby="page-title" hidden>
+    <div class="modal-card page-card" id="page-card"></div>
+  </div>
+
   <div class="modal" id="admin-modal" role="dialog" aria-modal="true" data-i18n-attr="aria-label:a.bar.aria" aria-label="Administración de la tienda" hidden>
     <div class="modal-card admin-card" id="admin-card"></div>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="/js/app.js"></script>
 </body>
 </html>
